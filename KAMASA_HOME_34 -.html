@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QR Attendance System</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: white;
+      padding: 25px;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+      width: 400px;
+      text-align: center;
+    }
+    h2 { margin-bottom: 10px; }
+    input, select, button {
+      width: 100%;
+      padding: 12px;
+      margin: 8px 0;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+    }
+    button:hover { background: #1e4fd1; }
+    video, canvas {
+      width: 100%;
+      border-radius: 10px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>Attendance Scan</h2>
+
+  <input type="text" id="name" placeholder="Enter your name" />
+
+  <select id="type">
+    <option value="Time In">Time In</option>
+    <option value="Time Out">Time Out</option>
+  </select>
+
+  <button onclick="startCamera()">Open Camera</button>
+  <video id="video" autoplay></video>
+  <canvas id="canvas" style="display:none"></canvas>
+
+  <button onclick="submitAttendance()">Submit Attendance</button>
+</div>
+
+<script>
+const webAppUrl = "https://script.google.com/macros/s/AKfycbx9ozdJQ0jiBtZY4RerGitfODpy7FpqgPiXmoQ17mHRZkFvOqu-BXoHn-v95EgN0lEq/exec";
+
+// 📷 CAMERA
+function startCamera() {
+  navigator.mediaDevices.getUserMedia({ video: true })
+    .then(stream => { document.getElementById("video").srcObject = stream; })
+    .catch(err => alert("Camera error: " + err));
+}
+
+function capturePhoto() {
+  const video = document.getElementById("video");
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.drawImage(video, 0, 0);
+
+  return new Promise(resolve => {
+    canvas.toBlob(blob => resolve(blob), "image/jpeg");
+  });
+}
+
+// 📍 GPS DISTANCE CHECK
+const officeLat = 14.2814;  // update to your office latitude
+const officeLng = 121.4160; // update to your office longitude
+const allowedRadius = 500;   // Increased radius to 500 meters for indoor GPS variance
+
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371e3;
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+// ✅ SUBMIT ATTENDANCE
+async function submitAttendance() {
+  const name = document.getElementById("name").value.trim();
+  const type = document.getElementById("type").value;
+
+  if (!name) { alert("Enter your name"); return; }
+
+  navigator.geolocation.getCurrentPosition(async pos => {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+
+    const distance = getDistance(lat, lng, officeLat, officeLng);
+    if (distance > allowedRadius) {
+      alert("Warning: You are slightly outside the office radius ❌\nSubmission allowed for indoor variance.");
+      // optional: you can still allow submission even if slightly outside
+    }
+
+    // Capture photo
+    const photoBlob = await capturePhoto();
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const photoBase64 = reader.result; // Base64 string
+
+      // Send POST request to Google Sheet Web App
+      try {
+        const res = await fetch(webAppUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            type,
+            latitude: lat,
+            longitude: lng,
+            photoURL: photoBase64
+          })
+        });
+        const result = await res.json();
+        if (result.status === "success") alert("Attendance Recorded ✅");
+        else alert("Error: " + result.message);
+      } catch(err) { alert("Error sending data: " + err); }
+    };
+    reader.readAsDataURL(photoBlob);
+
+  }, () => alert("Enable GPS to record attendance"));
+}
+</script>
+
+</body>
+</html>
